@@ -1,0 +1,45 @@
+name: Technical Inventory Analysis
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate Technical Inventory Report
+        run: |
+          echo "# Technical Inventory Report" > inventory_report.md
+          echo "Generated at: $(date)" >> inventory_report.md
+
+          echo "\n## Directory Tree" >> inventory_report.md
+          echo '```' >> inventory_report.md
+          ls -R >> inventory_report.md
+          echo '```' >> inventory_report.md
+
+          # List of key files to check and include in the report
+          key_files=("package.json" "package-lock.json" "yarn.lock" "pnpm-lock.yaml" "bun.lockb" "tsconfig.json" "vite.config.ts" "vite.config.js" "Dockerfile" "README.md")
+
+          for file in "${key_files[@]}"; do
+            echo "\n## Content of ${file}" >> inventory_report.md
+            echo '```' >> inventory_report.md
+            if [ -f "$file" ]; then
+              cat "$file" >> inventory_report.md
+            else
+              echo "${file} not found." >> inventory_report.md
+            fi
+            echo '```' >> inventory_report.md
+          done
+
+      - name: Upload Inventory Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: technical-inventory-report
+          path: inventory_report.md
