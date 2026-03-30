@@ -1,45 +1,41 @@
-name: Technical Inventory Analysis
+name: Generate Technical Inventory Snapshot
 
 on:
-  push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0' # Run weekly on Sunday at midnight UTC
 
 jobs:
-  analyze:
+  generate_snapshot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Generate Technical Inventory Report
+      - name: Create snapshot directory
+        run: mkdir -p technical-inventory-snapshot
+
+      - name: Generate directory tree
+        run: |-
+          tree -J -L 3 -I 'node_modules|dist|.git|.github' > technical-inventory-snapshot/directory_tree.json
+        continue-on-error: true # tree might not be installed by default, or fail on large repos
+
+      - name: Copy manifest files and configs
         run: |
-          echo "# Technical Inventory Report" > inventory_report.md
-          echo "Generated at: $(date)" >> inventory_report.md
+          find . -maxdepth 2 -type f -name 'package.json' -o -name 'package-lock.json' -o -name 'yarn.lock' -o -name 'pnpm-lock.yaml' -o -name 'bun.lockb' -o -name 'tsconfig.json' -o -name 'vite.config.*' -o -name 'Dockerfile' -o -name 'docker-compose.yml' -o -name 'README.md' | xargs -I {} cp --parents {} technical-inventory-snapshot/
+          cp -r .github/workflows technical-inventory-snapshot/ || true
 
-          echo "\n## Directory Tree" >> inventory_report.md
-          echo '```' >> inventory_report.md
-          ls -R >> inventory_report.md
-          echo '```' >> inventory_report.md
+      - name: Archive source and test folders
+        run: |
+          tar -czf technical-inventory-snapshot/src.tar.gz src/ || true
+          tar -czf technical-inventory-snapshot/tests.tar.gz tests/ || true
 
-          # List of key files to check and include in the report
-          key_files=("package.json" "package-lock.json" "yarn.lock" "pnpm-lock.yaml" "bun.lockb" "tsconfig.json" "vite.config.ts" "vite.config.js" "Dockerfile" "README.md")
-
-          for file in "${key_files[@]}"; do
-            echo "\n## Content of ${file}" >> inventory_report.md
-            echo '```' >> inventory_report.md
-            if [ -f "$file" ]; then
-              cat "$file" >> inventory_report.md
-            else
-              echo "${file} not found." >> inventory_report.md
-            fi
-            echo '```' >> inventory_report.md
-          done
-
-      - name: Upload Inventory Report
+      - name: Upload technical inventory snapshot
         uses: actions/upload-artifact@v4
         with:
-          name: technical-inventory-report
-          path: inventory_report.md
+          name: technical-inventory-snapshot
+          path: technical-inventory-snapshot/
+          retention-days: 7
