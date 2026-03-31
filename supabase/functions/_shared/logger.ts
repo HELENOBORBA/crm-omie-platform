@@ -1,51 +1,70 @@
-// supabase/functions/_shared/logger.ts
-//
-// Provides LGPD-compliant logging functions that automatically mask sensitive data.
-// Use these functions instead of `console.log` or `console.error` when handling
-// user or sensitive data.
-//
-import { maskObjectData } from './masking.ts';
-
 /**
- * A helper to pretty-print an object to a string, ensuring it's masked.
- * @param data The data to stringify.
- * @returns A JSON string representation of the masked data.
+ * @file Centralized logger with automatic data masking for production.
+ * This logger ensures that sensitive data is not exposed in production logs.
  */
-const stringifyAndMask = (data: unknown): string => {
-  try {
-    return JSON.stringify(maskObjectData(data), null, 2);
-  } catch (e) {
-    return '[Logger Error: Could not stringify and mask data]';
-  }
+
+import { maskData } from './masking.ts';
+
+// Determines if the current environment is production.
+const isProduction = Deno.env.get('ENV') === 'production';
+
+// Helper to stringify objects, handling circular references.
+const getCircularReplacer = () => {
+  const seen = new WeakSet();
+  return (_key: string, value: any) => {
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) {
+        return '[Circular Reference]';
+      }
+      seen.add(value);
+    }
+    return value;
+  };
 };
 
 /**
- * Logs an informational message. Any provided data object will be masked.
- * @param message The message to log.
- * @param data Optional data object to include in the log.
+ * Core logging function.
+ * @param level The log level ('INFO', 'WARNING', 'ERROR').
+ * @param message The log message.
+ * @param data Optional data object to log. Will be masked in production.
  */
-export const logInfo = (message: string, data?: unknown) => {
-  if (data) {
-    console.log(`[INFO] ${message}`, stringifyAndMask(data));
+const log = (level: 'INFO' | 'WARNING' | 'ERROR', message: string, data?: object) => {
+  // In production, mask the data before logging.
+  // In other environments, log the raw data for easier debugging.
+  const dataToLog = isProduction ? maskData(data) : data;
+
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    data: dataToLog,
+  };
+
+  // Use console.error for ERROR level to ensure it goes to stderr.
+  if (level === 'ERROR') {
+    console.error(JSON.stringify(logEntry, getCircularReplacer()));
   } else {
-    console.log(`[INFO] ${message}`);
+    console.log(JSON.stringify(logEntry, getCircularReplacer()));
   }
 };
 
 /**
- * Logs an error message. Any provided error or data object will be masked.
- * @param message The error message to log.
- * @param error Optional error or data object to include in the log.
+ * A simple logger instance with different levels.
+ * It automatically masks sensitive data in production environments.
  */
-export const logError = (message: string, error?: unknown) => {
-  if (error) {
-    console.error(`[ERROR] ${message}`, stringifyAndMask(error));
-  } else {
-    console.error(`[ERROR] ${message}`);
-  }
-};
-
 export const logger = {
-  info: logInfo,
-  error: logError,
+  info: (message: string, data?: object) => {
+    log('INFO', message, data);
+  },
+  warn: (message: string, data?: object) => {
+    log('WARNING', message, data);
+  },
+  error: (message: string, error?: any, data?: object) => {
+    // Combine provided data with error information for a complete log.
+    const errorData = {
+      ...data,
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    };
+    log('ERROR', message, errorData);
+  },
 };
