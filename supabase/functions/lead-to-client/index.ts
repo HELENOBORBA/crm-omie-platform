@@ -1,8 +1,8 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
-import { createOmieClient } from './omie.ts';
-import type { OmieCreateClientPayload } from './types.ts';
+import { upsertClientInOmie } from './omie.ts';
+import type { Lead, LeadToClientPayload } from './types.ts';
 
 // Initialize Supabase client with service role key for backend operations
 const supabase = createClient(
@@ -20,7 +20,7 @@ serve(async (req) => {
   }
 
   try {
-    const { lead_id } = await req.json();
+    const { lead_id }: LeadToClientPayload = await req.json();
     if (!lead_id) {
       return new Response(JSON.stringify({ error: '`lead_id` is required.' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -31,48 +31,43 @@ serve(async (req) => {
     // 1. Fetch lead data from Supabase
     const { data: lead, error: leadError } = await supabase
       .from('leads')
-      .select('id, name, email, document') // Assuming 'document' holds cnpj_cpf
+      .select('id, name, email, phone, cnpj_cpf, address, status') // Assuming 'document' holds cnpj_cpf
       .eq('id', lead_id)
-      .single();
+      .single<Lead>();
 
     if (leadError) throw leadError;
     if (!lead) throw new Error(`Lead with ID ${lead_id} not found.`);
+    if (lead.status === 'converted') throw new Error('Lead has already been converted.');
 
-    // 2. Prepare payload for Omie API
-    const omiePayload: OmieCreateClientPayload = {
-      codigo_cliente_integracao: lead.id,
-      razao_social: lead.name,
-      cnpj_cpf: lead.document,
-      email: lead.email,
-    };
+    // 2. Create client in Omie
+    const omieClientId = await upsertClientInOmie(lead);
 
-    // 3. Create client in Omie
-    const omieResponse = await createOmieClient(omiePayload);
-
-    // 4. Create client in local Supabase DB
+    // 3. Create client in local Supabase DB
     const { data: newClient, error: clientError } = await supabase
       .from('clients')
       .insert({
-        lead_id: lead.id,
+        origin_lead_id: lead.id,
         name: lead.name,
         email: lead.email,
-        document: lead.document,
-        omie_client_id: omieResponse.codigo_cliente_omie,
+        phone: lead.phone,
+        document: lead.cnpj_cpf,
+        address: lead.address,
+        id_omie: omieClientId,
       })
-      .select()
+      .select('id')
       .single();
 
     if (clientError) throw clientError;
 
-    // 5. Update lead status to 'CONVERTED'
+    // 4. Update lead status to 'converted' and link to new client
     await supabase
       .from('leads')
-      .update({ status: 'CONVERTED' })
+      .update({ status: 'converted', client_id: newClient.id })
       .eq('id', lead.id);
 
-    return new Response(JSON.stringify({ client: newClient }), {
+    return new Response(JSON.stringify({ client_id: newClient.id, omie_id: omieClientId }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
+      status: 201,
     });
   } catch (error) {
     console.error('Lead to client conversion failed:', error);
