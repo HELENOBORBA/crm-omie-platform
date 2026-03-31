@@ -1,7 +1,7 @@
-// supabase/functions/_shared/masking.ts
-//
-// Provides utility functions for masking sensitive data to ensure LGPD compliance in logs.
-//
+/**
+ * @file Centralized data masking utilities for LGPD compliance.
+ * This file provides functions to mask sensitive data before logging or storage.
+ */
 
 /**
  * Masks a string by replacing characters with a mask character,
@@ -12,7 +12,7 @@
  * @param maskChar The character to use for masking.
  * @returns The masked string.
  */
-const maskString = (
+const maskStringInternal = (
   str: string,
   visiblePrefix: number,
   visibleSuffix: number,
@@ -28,20 +28,32 @@ const maskString = (
 };
 
 /**
+ * Masks a string value, showing only a few characters.
+ * @param value The string to mask.
+ * @returns The masked string.
+ */
+export function maskString(value: string | null | undefined): string {
+  if (!value) return '***';
+  if (value.length <= 4) return '****';
+  return `${value.substring(0, 3)}***`;
+}
+
+/**
  * Masks an email address, showing the first character of the username.
  * Example: "my.email@example.com" -> "m*******@example.com"
  * @param email The email string to mask.
  * @returns A masked email string.
  */
-export const maskEmail = (email: string): string => {
+export function maskEmail(email: string | null | undefined): string {
+  if (!email) return '***';
   const atIndex = email.indexOf('@');
   if (atIndex <= 1) {
-    return maskString(email, 1, 1);
+    return maskStringInternal(email, 1, 1);
   }
   const username = email.substring(0, atIndex);
   const domain = email.substring(atIndex);
-  return `${maskString(username, 1, 0)}${domain}`;
-};
+  return `${maskStringInternal(username, 1, 0)}${domain}`;
+}
 
 /**
  * Masks a CPF or CNPJ number, showing the first 3 and last 2 digits.
@@ -50,45 +62,65 @@ export const maskEmail = (email: string): string => {
  */
 export const maskCpfCnpj = (doc: string): string => {
   const cleanedDoc = String(doc).replace(/\D/g, '');
-  return maskString(cleanedDoc, 3, 2);
-};
-
-// Defines which keys are sensitive and which masking function to apply.
-const SENSITIVE_FIELD_MASK_MAP: Record<string, (value: any) => string> = {
-  email: maskEmail,
-  cpf_cnpj: maskCpfCnpj,
-  cpf: maskCpfCnpj,
-  cnpj: maskCpfCnpj,
-  telefone: (val: string) => maskString(String(val).replace(/\D/g, ''), 2, 2),
-  telefone1_numero: (val: string) => maskString(String(val).replace(/\D/g, ''), 2, 2),
-  contato: maskEmail, // Assuming contact can be an email
+  return maskStringInternal(cleanedDoc, 3, 2);
 };
 
 /**
- * Recursively traverses an object or array and masks values of sensitive keys
- * defined in `SENSITIVE_FIELD_MASK_MAP`.
- * @param data The data to process (object, array, or primitive).
- * @returns The data with sensitive fields masked.
+ * A list of keys that are considered sensitive and should be masked.
+ * The matching is case-insensitive and checks if the key *includes* the string.
  */
-export function maskObjectData(data: unknown): unknown {
-  if (typeof data !== 'object' || data === null) {
+const SENSITIVE_KEYS = [
+  'cpf', 'cnpj', 'documento', 'rg', 'ie', 'inscricao_estadual',
+  'email', 'e_mail',
+  'phone', 'telefone', 'celular',
+  'name', 'nome', 'razao_social', 'nome_fantasia', 'contato',
+  'address', 'endereco', 'bairro', 'cidade', 'cep',
+  'password', 'senha', 'token', 'secret', 'key', 'authorization',
+  'valor', 'preco', 'total', 'desconto', 'imposto',
+  'conta', 'agencia', 'banco', 'dados_bancarios',
+];
+
+/**
+ * Recursively masks sensitive data in an object, array, or any other data structure.
+ * It creates a deep copy of the data with sensitive fields masked.
+ * @param data The data to mask.
+ * @returns A deep copy of the data with sensitive fields masked.
+ */
+export function maskData(data: any): any {
+  if (data === null || data === undefined) {
     return data;
   }
 
   if (Array.isArray(data)) {
-    return data.map(maskObjectData);
+    return data.map(item => maskData(item));
   }
 
-  const newObj: Record<string, unknown> = {};
-  for (const key in data) {
-    if (Object.prototype.hasOwnProperty.call(data, key)) {
-      const value = (data as Record<string, unknown>)[key];
-      if (SENSITIVE_FIELD_MASK_MAP[key] && typeof value === 'string' && value) {
-        newObj[key] = SENSITIVE_FIELD_MASK_MAP[key](value);
-      } else {
-        newObj[key] = maskObjectData(value); // Recurse for nested objects/arrays
+  if (typeof data === 'object') {
+    const newObj: { [key: string]: any } = {};
+    for (const key in data) {
+      if (Object.prototype.hasOwnProperty.call(data, key)) {
+        const lowerCaseKey = key.toLowerCase();
+        const value = data[key];
+
+        const isSensitiveKey = SENSITIVE_KEYS.some(sensitiveKey => lowerCaseKey.includes(sensitiveKey));
+
+        if (isSensitiveKey && typeof value === 'string') {
+          if (lowerCaseKey.includes('email') || lowerCaseKey.includes('e_mail')) {
+            newObj[key] = maskEmail(value);
+          } else if (lowerCaseKey.includes('cpf') || lowerCaseKey.includes('cnpj') || lowerCaseKey.includes('documento')) {
+            newObj[key] = maskCpfCnpj(value);
+          } else if (lowerCaseKey.includes('phone') || lowerCaseKey.includes('telefone') || lowerCaseKey.includes('celular')) {
+            newObj[key] = maskStringInternal(String(value).replace(/\D/g, ''), 2, 2);
+          } else {
+            newObj[key] = maskString(value);
+          }
+        } else {
+          newObj[key] = maskData(value); // Recurse for nested objects/arrays
+        }
       }
     }
+    return newObj;
   }
-  return newObj;
+
+  return data;
 }
