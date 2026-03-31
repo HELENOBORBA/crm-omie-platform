@@ -3,6 +3,28 @@
  */
 
 /**
+ * Payload for the lead-to-client conversion function.
+ */
+export interface LeadToClientPayload {
+  lead_id: string;
+}
+
+/**
+ * Represents a Lead record from the Supabase 'leads' table.
+ * This should be kept in sync with the database schema.
+ */
+export interface Lead {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  cnpj_cpf: string;
+  address?: string | null;
+  status: 'new' | 'contacted' | 'qualified' | 'converted' | 'lost';
+  // Add other relevant lead fields here
+}
+
+/**
  * Payload for creating a client in Omie.
  * Based on Omie API documentation for `IncluirCliente`.
  */
